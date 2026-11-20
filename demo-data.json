@@ -1,0 +1,10 @@
+{
+  "shift_id": "D1",
+  "recipe": {"id": "strip-v1", "multiplier": 2, "offset": 3},
+  "instrument": "bench-04",
+  "orders": [
+    {"id": "T", "sample": "A01", "reading": {"raw": 7, "record": "sheet-T-1", "correction": {"raw": 11, "record": "sheet-T-2"}}},
+    {"id": "U", "sample": "A02", "reading": {"raw": 0, "record": "sheet-U-1"}},
+    {"id": "W", "sample": "A03", "reading": null}
+  ]
+}
