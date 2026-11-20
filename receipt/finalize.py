@@ -62,10 +62,10 @@ def finalize_receipt(connection: sqlite3.Connection, order_id: str) -> ReceivedI
         proof = _get_confirmation(connection, order_id)
         if proof is None:
             raise Conflict('receipt has no confirmed handoff')
-        original = connection.execute(
-            'SELECT MIN(revision) FROM receipt_candidates WHERE order_id = ?', (order_id,)
-        ).fetchone()[0]
-        candidate = get_candidate(connection, order_id, original)
+        # Sign the revision that was actually handed off. Older preserved
+        # candidates stay in the ledger as original evidence but are never
+        # published once a newer revision wins the handoff.
+        candidate = get_candidate(connection, order_id, proof['revision'])
         if candidate is None:
             raise Conflict('confirmed candidate is unavailable')
         converted = convert_reading(connection, order, candidate.raw)

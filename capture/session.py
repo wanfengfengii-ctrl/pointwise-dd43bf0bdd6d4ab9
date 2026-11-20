@@ -30,22 +30,37 @@ def collect(local: sqlite3.Connection, bench: SQLiteBench | None, order_id: str)
             return CollectResult('received', signed, signed.operation_id)
         attempt = get_current_attempt(local, order_id)
         reading = bench.read(order_id) if bench is not None else None
-        if reading is not None and (attempt is None or reading.revision > attempt.revision):
-            attempt = prepare_transfer(local, order, reading)
-        elif attempt is None or attempt.state == 'stale':
-            if get_current_attempt(local, order_id) != attempt:
+        if attempt is not None and attempt.terminal_status is None:
+            # An operation for this order is still in flight. Drive it to its
+            # terminal result before touching any newer staged revision: the
+            # original request continues under its own operation id, and a
+            # missing reply keeps it pending for another executor to resolve.
+            outcome = resume_transfer(local, bench, attempt)
+            if outcome is None:
+                return CollectResult('pending', operation_id=attempt.operation_id)
+            if outcome.status == 'stale':
                 continue
-            return CollectResult('awaiting_reading')
-        outcome = resume_transfer(local, bench, attempt)
-        if outcome is None:
-            signed = read_receipt(local, order_id=order_id)
-            if signed is not None:
-                return CollectResult('received', signed, signed.operation_id)
-            return CollectResult('pending', operation_id=attempt.operation_id)
-        if outcome.status == 'stale':
+            if outcome.status != 'transferred':
+                raise Conflict(f'operation {outcome.operation_id!r} ended with {outcome.status}')
+            confirm_candidate(local, outcome)
+            signed = finalize_receipt(local, order_id)
+            return CollectResult('received', signed, signed.operation_id)
+        if reading is not None and (attempt is None or reading.revision > attempt.revision):
+            # Only start a new operation once every older operation has a
+            # durable terminal outcome, so stale replies belong to their own
+            # operation and can never overwrite the newer one.
+            attempt = prepare_transfer(local, order, reading)
             continue
-        if outcome.status != 'transferred':
-            raise Conflict(f'operation {outcome.operation_id!r} ended with {outcome.status}')
-        confirm_candidate(local, outcome)
-        signed = finalize_receipt(local, order_id)
-        return CollectResult('received', signed, signed.operation_id)
+        if attempt is not None and attempt.terminal_status is not None:
+            outcome = attempt.outcome()
+            if outcome.status == 'transferred':
+                # A verified handoff whose receipt publication previously
+                # failed can still be finalized, including with the bench
+                # offline: all required evidence is already local.
+                confirm_candidate(local, outcome)
+                signed = finalize_receipt(local, order_id)
+                return CollectResult('received', signed, signed.operation_id)
+            # A terminal non-success (stale/blocked) with nothing newer to
+            # pursue leaves the order waiting for a fresh staged reading.
+            return CollectResult('awaiting_reading')
+        return CollectResult('awaiting_reading')
